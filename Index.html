@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>BrandScope — CollabStudio</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:#0a0d12;color:#f7f4ef;font-family:Georgia,serif}
+    ::-webkit-scrollbar{width:6px}
+    ::-webkit-scrollbar-thumb{background:rgba(42,122,140,.4);border-radius:3px}
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script>
+    let ANTHROPIC_KEY = localStorage.getItem('bs_apikey') || '';
+    window.ANTHROPIC_KEY = ANTHROPIC_KEY;
+  </script>
+  <script>
+    const T="#2a7a8c",TL="#3a9ab0",G="#c9a84c",INK="#0a0d12",CR="#f7f4ef",MU="#6b7280";
+const BO="rgba(42,122,140,0.18)",GR="#4ade80",AM="#fbbf24",RE="#f87171";
+const sc=s=>s>=75?GR:s>=50?AM:RE;
+const SK="bs_v11";
+const W={engagement_real:20,calidad_audiencia:20,afinidad_marca:25,tono_estetica:10,ubicacion_audiencia:15,riesgo_competidor:10};
+const DL={engagement_real:"Engagement Real",calidad_audiencia:"Calidad Audiencia",afinidad_marca:"Afinidad Marca",tono_estetica:"Tono & Estética",ubicacion_audiencia:"Ubicación Audiencia",riesgo_competidor:"Riesgo Competidor"};
+const calcS=d=>!d?0:Math.round(Object.entries(W).reduce((a,[k,w])=>{const v=d[k];const s=typeof v==="object"?Number(v?.score):Number(v);return a+(isNaN(s)?0:s)*(w/100);},0));
+const getV=s=>s>=70?"APROBADO":s>=50?"APROBADO CON RESERVAS":"RECHAZADO";
+const lH=()=>{try{return JSON.parse(localStorage.getItem(SK))||[];}catch{return[];}};
+const sH=h=>{try{localStorage.setItem(SK,JSON.stringify(h));}catch{}};
+const IND=["Tecnología","Retail & E-commerce","Alimentos & Bebidas","Belleza & Cuidado Personal","Moda & Estilo","Deportes & Fitness","Turismo & Hospitality","Salud & Pharma","Finanzas & Seguros","Otro"];
+const OBJ=["Awareness (conocimiento de marca)","Consideración (engagement)","Conversión (ventas directas)","Lanzamiento de producto","UGC (contenido para reusar)"];
+const CC={background:"rgba(255,255,255,.03)",border:"1px solid "+BO,borderRadius:16,padding:20,marginBottom:12};
+const pc=s=>s>=75?"#16a34a":s>=50?"#b45309":"#dc2626";
+const pv=v=>v==="APROBADO"?"✓ APROBADO":v==="APROBADO CON RESERVAS"?"⚡ RESERVAS":"✗ RECHAZADO";
+const gs=(r,k)=>{const v=r.dimensiones?.[k];return typeof v==="object"?Number(v?.score)||0:Number(v)||0;};
+
+const SEARCH_TOOL=[{type:"web_search_20250305",name:"web_search"}];
+async function api(msg,tok=400,retries=3,useSearch=false){
+  for(let i=0;i<retries;i++){
+    const body={model:"claude-sonnet-4-20250514",max_tokens:tok,messages:[{role:"user",content:msg}]};
+    if(useSearch)body.tools=SEARCH_TOOL;
+    const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    if(r.status===429){
+      if(i<retries-1){await new Promise(res=>setTimeout(res,3000*(i+1)));continue;}
+    }
+    if(!r.ok)throw new Error("HTTP "+r.status);
+    const d=await r.json();if(d.error)throw new Error(d.error.message);
+    return(d.content||[]).filter(b=>b.type==="text").map(b=>b.text).join(" ")||"";
+  }
+  throw new Error("Rate limit — intenta en unos segundos");
+}
+async function verificar(h,p,log){
+  log("Buscando "+h+"...");
+  const handle=h.startsWith("@")?h:"@"+h;
+  const q="Busca en internet quién es el influencer "+handle+" de "+p+". "
+    +"Intenta con estas búsquedas: '"+handle+" influencer', '"+handle+" "+p+"', '"+handle+" Colombia', '"+handle+" LATAM'. "
+    +"Responde SOLO con JSON válido:\n"
+    +"Si encontraste datos reales: {\"conocido\":true,\"nicho\":\"nicho real\",\"seguidores\":\"número real\",\"resumen_perfil\":\"quién es con datos reales\"}\n"
+    +"Si no encontraste nada concreto: {\"conocido\":false,\"opciones\":[\"posibilidad 1\",\"posibilidad 2\"],\"pregunta\":\"pregunta corta al usuario\"}";
+  const raw=await api(q,500,3,true);
+  const s=raw.indexOf("{"),e=raw.lastIndexOf("}");
+  if(s===-1)return {conocido:true};
+  try{return JSON.parse(raw.slice(s,e+1));}catch{return {conocido:true};}
+}
+
+async function evaluar(h,p,marca,ind,obj,extra,ctx,log){
+  log("Evaluando "+h+"...");
+  const ctxStr=ctx?" Contexto adicional del usuario: "+ctx:"";
+  const handle=h.startsWith("@")?h:"@"+h;
+  const q="Eres un experto en influencer marketing LATAM con acceso a búsqueda web.\n\n"
+    +"TAREA: Evalúa al influencer "+handle+" de "+p+" para una campaña de "+marca+" ("+ind+", "+obj+").\n"
+    +(extra?"Contexto de campaña: "+extra+"\n":"")
+    +ctxStr+"\n\n"
+    +"INSTRUCCIONES DE BÚSQUEDA:\n"
+    +"1. Busca '"+handle+" "+p+"' en Google para encontrar artículos, entrevistas o menciones\n"
+    +"2. Busca '"+handle+" influencer Colombia' o '"+handle+" influencer LATAM' si no hay resultados\n"
+    +"3. Busca '"+handle+" "+marca+"' o '"+handle+" "+ind+"' para ver colaboraciones\n"
+    +"4. Usa CUALQUIER fuente secundaria: blogs, medios, directorios de influencers, LinkedIn, YouTube, etc.\n"
+    +"5. Si "+p+" es Instagram, busca también en TikTok, YouTube o Twitter del mismo creador\n\n"
+    +"REGLAS PARA LOS SCORES (enteros 1-100, NUNCA 0):\n"
+    +"- Si encontraste datos reales: scores precisos basados en hechos\n"
+    +"- Si encontraste datos parciales: scores estimados con comentario honesto\n"
+    +"- Si no encontraste nada: scores conservadores 25-45 con alerta de 'perfil no verificado'\n\n"
+    +"Responde SOLO con este JSON (sin markdown, sin texto extra):\n"
+    +"{\"handle\":\""+h+"\",\"plataforma\":\""+p+"\",\"marca\":\""+marca+"\","
+    +"\"seguidores\":\"número real o estimado\",\"engagement\":\"% real o estimado\","
+    +"\"nicho\":\"nicho principal\","
+    +"\"datos_encontrados\":\"qué fuentes encontraste y qué datos obtuviste\","
+    +"\"colaboraciones_detectadas\":[\"marca1\",\"marca2\"],"
+    +"\"resumen\":\"2-3 oraciones con datos reales encontrados o estimación honesta\","
+    +"\"dimensiones\":{"
+    +"\"engagement_real\":{\"score\":55,\"comentario\":\"análisis con datos reales o estimación\"},"
+    +"\"calidad_audiencia\":{\"score\":55,\"comentario\":\"análisis\"},"
+    +"\"afinidad_marca\":{\"score\":55,\"comentario\":\"análisis\"},"
+    +"\"tono_estetica\":{\"score\":55,\"comentario\":\"análisis\"},"
+    +"\"ubicacion_audiencia\":{\"score\":55,\"comentario\":\"análisis\"},"
+    +"\"riesgo_competidor\":{\"score\":55,\"comentario\":\"análisis\"}},"
+    +"\"fortalezas\":[\"fortaleza real 1\",\"fortaleza real 2\",\"fortaleza real 3\"],"
+    +"\"alertas\":[\"alerta o limitación importante\"],"
+    +"\"recomendacion\":\"3-5 oraciones tácticas concretas para "+marca+"\"}";
+  const raw=await api(q,2000,3,true);
+  const s=raw.indexOf("{"),e=raw.lastIndexOf("}");
+  if(s===-1)throw new Error("Sin JSON — reintenta");
+  const res=JSON.parse(raw.slice(s,e+1));
+  Object.keys(W).forEach(k=>{
+    if(!res.dimensiones)res.dimensiones={};
+    const v=res.dimensiones[k];
+    const n=typeof v==="object"?Number(v?.score):Number(v);
+    if(typeof res.dimensiones[k]!=="object")res.dimensiones[k]={score:40,comentario:"Sin datos suficientes"};
+    if(isNaN(n)||n<=0||n>100)res.dimensiones[k].score=40;
+    else res.dimensiones[k].score=Math.round(n);
+  });
+  res.brandfit_score=calcS(res.dimensiones);
+  res.veredicto=getV(res.brandfit_score);
+  log(h+": "+res.brandfit_score+" → "+res.veredicto+" ✓");
+  return res;
+}
+
+
+    function openPDF(r1,marca,r2){
+  const isC=!!r2,now=new Date().toLocaleDateString("es-CO",{day:"2-digit",month:"long",year:"numeric"});
+  const card=r=>"<div class='nb' style='border:1px solid #d4eaf0;border-radius:8px;padding:14px;margin-bottom:12px;background:#fafcfd'>"
+    +"<div style='display:flex;gap:12px;margin-bottom:10px'>"
+    +"<div style='width:50px;height:50px;border-radius:50%;border:4px solid "+pc(r.brandfit_score)+";display:flex;flex-direction:column;align-items:center;justify-content:center;flex-shrink:0'>"
+    +"<b style='font-size:15px;color:"+pc(r.brandfit_score)+"'>"+r.brandfit_score+"</b><span style='font-size:6px;color:#888'>SCORE</span></div>"
+    +"<div><span style='border:1px solid "+pc(r.brandfit_score)+";color:"+pc(r.brandfit_score)+";padding:2px 8px;border-radius:100px;font-size:8px;font-weight:700'>"+pv(r.veredicto)+"</span>"
+    +"<div style='font-size:13px;font-weight:900;margin:4px 0 2px'>"+r.handle+" · "+(r.plataforma||"")+"</div>"
+    +"<div style='font-size:9px;color:#666'>"
+    +[r.seguidores?"👥 "+r.seguidores:"",r.engagement?"💬 "+r.engagement+"%":"",r.nicho?"🎯 "+r.nicho:""].filter(Boolean).join(" · ")+"</div>"
+    +"<div style='font-size:11px;color:#333;line-height:1.5;margin-top:4px'>"+(r.resumen||"")+"</div></div></div>"
+    +(r.datos_encontrados?"<div style='background:#f0f8fa;border:1px solid #c5e3ea;padding:4px 8px;border-radius:4px;font-size:9px;color:#2a7a8c;margin-bottom:8px'>🔍 "+r.datos_encontrados+"</div>":"")
+    +"<table style='width:100%;border-collapse:collapse;margin-bottom:10px'><thead><tr style='background:#e8f4f8'>"
+    +"<th style='padding:4px 8px;font-size:9px;text-align:left;color:#2a7a8c'>Dimensión</th>"
+    +"<th style='padding:4px 8px;font-size:9px;color:#2a7a8c'>Score</th>"
+    +"<th style='padding:4px 8px;font-size:9px;text-align:left;color:#2a7a8c'>Comentario</th></tr></thead><tbody>"
+    +Object.keys(W).map(k=>{const s=gs(r,k);const cm=typeof r.dimensiones[k]==="object"?r.dimensiones[k]?.comentario:"";
+      return "<tr><td style='padding:4px 8px;font-size:10px;color:#555'>"+DL[k]+" ("+W[k]+"%)</td>"
+        +"<td style='padding:4px 8px;font-size:11px;font-weight:700;color:"+pc(s)+"'>"+s+"/100</td>"
+        +"<td style='padding:4px 8px;font-size:10px;color:#666'>"+cm+"</td></tr>";}).join("")+"</tbody></table>"
+    +"<div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px'>"
+    +"<div style='border:1px solid #d4eaf0;border-radius:6px;padding:9px'><b style='font-size:9px;color:#16a34a;display:block;margin-bottom:5px'>✓ FORTALEZAS</b>"
+    +(r.fortalezas||[]).map(f=>"<div style='font-size:10px;margin-bottom:3px'>✓ "+f+"</div>").join("")+"</div>"
+    +"<div style='border:1px solid #d4eaf0;border-radius:6px;padding:9px'><b style='font-size:9px;color:#b45309;display:block;margin-bottom:5px'>⚠ ALERTAS</b>"
+    +(r.alertas?.filter(Boolean).length?r.alertas.filter(Boolean).map(a=>"<div style='font-size:10px;margin-bottom:3px'>⚠ "+a+"</div>").join(""):"<span style='font-size:10px;color:#888'>Sin alertas</span>")+"</div></div>"
+    +"<div style='background:#f7fbf5;border:1px solid #b8dfc5;border-radius:6px;padding:10px'>"
+    +"<b style='font-size:9px;color:#2a7a8c;display:block;margin-bottom:5px'>⚡ RECOMENDACIÓN — "+marca+"</b>"
+    +"<div style='font-size:11px;color:#222;line-height:1.55'>"+(r.recomendacion||"")+"</div></div></div>";
+  const items=isC?[r1,r2]:[r1];
+  const ttl=isC?r1.handle+" vs "+r2.handle:"Evaluación: "+r1.handle;
+  const win2=isC?"<div style='background:#e8f4f8;border:1px solid #9fd3e0;border-radius:7px;padding:9px 12px;margin-bottom:10px;font-size:11px'>🏆 <b>"+(r1.brandfit_score>=r2.brandfit_score?r1:r2).handle+"</b> — mejor BrandFit, "+Math.abs(r1.brandfit_score-r2.brandfit_score)+" pts para "+marca+"</div>":"";
+  const cmp2=isC?"<table style='width:100%;border-collapse:collapse;margin-bottom:12px'><thead><tr style='background:#e8f4f8'><th style='padding:5px 9px;font-size:9px;text-align:left;color:#2a7a8c'>Dimensión</th><th style='padding:5px 9px;font-size:9px;color:#2a7a8c'>"+r1.handle+"</th><th style='padding:5px 9px;font-size:9px;color:#2a7a8c'>"+r2.handle
+    +"</th></tr></thead><tbody><tr><td style='padding:5px;font-size:10px'>BrandFit Score</td><td style='padding:5px;font-size:13px;font-weight:900;color:"+pc(r1.brandfit_score)
+    +"'>"+r1.brandfit_score+"</td><td style='padding:5px;font-size:13px;font-weight:900;color:"+pc(r2.brandfit_score)+"'>"+r2.brandfit_score+"</td></tr>"+Object.keys(W).map(k=>{const s0=gs(r1,k),s1=gs(r2,k);return "<tr><td style='padding:4px;font-size:10px;color:#555'>"+DL[k]+" ("+W[k]+"%)</td><td style='padding:4px;font-weight:"+(s0>s1?700:400)+";color:"+pc(s0)+"'>"+s0+"</td><td style='padding:4px;font-weight:"+(s1>s0?700:400)+";color:"+pc(s1)+"'>"+s1
+    +"</td></tr>";}).join("")+"</tbody></table>":"";
+  const body2=isC?items.map((r,i)=>"<div style='background:#edf6f9;border:1px solid #c5e3ea;border-radius:5px;padding:5px 10px;margin-bottom:8px'><small style='font-size:9px;text-transform:uppercase;color:#2a7a8c'>Influencer "+(i===0?"A":"B")+"</small> <b>"+r.handle+"</b></div>"+card(r)+(i===0?"<div style='page-break-before:always;break-before:always;height:0;display:block'></div>":"")).join(""):card(r1);
+  const html="<!DOCTYPE html><html lang='es'><head><meta charset='UTF-8'><title>BrandScope</title>"
+    +"<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Georgia,serif;background:#fff;color:#1a1a2e}@page{margin:.7cm}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style>"
+    +"</head><body><div style='max-width:720px;margin:0 auto;padding:20px'>"
+    +"<div style='background:linear-gradient(135deg,#2a7a8c,#1a4a5c);margin:-20px -20px 16px;padding:13px 20px;display:flex;justify-content:space-between;align-items:center'>"
+    +"<div style='font-size:16px;font-weight:900;color:#fff'>Brand<em style='color:#7ecfdf;font-style:italic'>Scope</em><small style='font-size:8px;opacity:.6;font-family:monospace;display:block'>by CollabStudio</small></div>"
+    +"<div style='text-align:right;font-size:9px;color:rgba(255,255,255,.65);font-family:monospace;line-height:1.5'><div>"+(isC?"Comparativo":"Evaluación")+"</div><div>"+now+"</div></div></div>"
+    +"<div style='margin-bottom:10px;padding-bottom:9px;border-bottom:2px solid #e8f4f8'><h1 style='font-size:17px;font-weight:900'><em style='color:#2a7a8c;font-style:italic'>"+ttl+"</em></h1>"
+    +"<div style='font-size:10px;color:#666;font-family:monospace'>Campaña: "+marca+" · "+new Date().getFullYear()+"</div></div>"
+    +"<div style='margin-bottom:9px;background:#f0f8fa;border:1px solid #c5e3ea;border-radius:5px;padding:5px 10px;font-size:9px;font-family:monospace;color:#2a7a8c'>Pesos: Afinidad 25% · Engagement 20% · Audiencia 20% · Ubicación 15% · Tono 10% · Riesgo 10%</div>"
+    +win2+cmp2+body2
+    +"<div style='margin-top:14px;padding-top:7px;border-top:1px solid #dde;display:flex;justify-content:space-between;font-size:9px;color:#888;font-family:monospace'>"
+    +"<span>BrandScope by CollabStudio♥ · collabinfluencer.com.co</span><span>"+now+"</span></div></div></body></html>";
+  return html;
+}
+
+  </script>
+  <script type="text/babel" data-presets="react" data-type="script">
+    const {useState,useEffect,useRef,useCallback}=React;
+    
+function PdfModal({html,onClose}){
+  const aRef=React.useRef(null);
+  React.useEffect(()=>{
+    if(!aRef.current)return;
+    const blob=new Blob([html],{type:"text/html;charset=utf-8"});
+    const url=URL.createObjectURL(blob);
+    aRef.current.href=url;
+    return()=>URL.revokeObjectURL(url);
+  },[html]);
+  return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.95)",zIndex:1000,display:"flex",flexDirection:"column"}}>
+    <div style={{background:INK,padding:"11px 18px",display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:"1px solid "+BO,flexShrink:0}}>
+      <span style={{fontFamily:"Georgia,serif",fontSize:15,fontWeight:900}}>Brand<em style={{fontStyle:"italic",color:TL}}>Scope</em> <span style={{fontSize:11,color:MU}}> \u2014 Informe</span></span>
+      <div style={{display:"flex",gap:6,alignItems:"center"}}>
+        <a ref={aRef} download="informe-brandscope.html" style={{padding:"6px 14px",background:"linear-gradient(135deg,"+T+","+TL+")",borderRadius:7,color:CR,fontSize:12,fontWeight:700,cursor:"pointer",textDecoration:"none",display:"inline-block"}}>\u2b07\ufe0f Descargar informe.html</a>
+        <span style={{fontSize:11,color:MU}}>\u2192 \u00c1brelo en Chrome \u2192 Ctrl+P \u2192 PDF</span>
+        <button onClick={onClose} style={{padding:"5px 13px",background:"transparent",border:"1px solid "+BO,borderRadius:7,color:MU,fontSize:12,cursor:"pointer"}}>\u2715 Cerrar</button>
+      </div>
+    </div>
+    <iframe srcDoc={html} style={{flex:1,border:"none",background:"#fff"}} title="Informe BrandScope"/>
+  </div>;
+}
+
+function Circle({score}){
+  const sz=76,r=sz*.38,c=2*Math.PI*r,off=c-(score/100)*c,col=sc(score);
+  return <div style={{position:"relative",width:sz,height:sz,flexShrink:0}}>
+    <svg width={sz} height={sz} viewBox={"0 0 "+sz+" "+sz} style={{transform:"rotate(-90deg)",position:"absolute"}}>
+      <circle cx={sz/2} cy={sz/2} r={r} fill="none" stroke="rgba(255,255,255,.06)" strokeWidth={sz*.09}/>
+      <circle cx={sz/2} cy={sz/2} r={r} fill="none" stroke={col} strokeWidth={sz*.09} strokeDasharray={c} strokeDashoffset={off} strokeLinecap="round"/>
+    </svg>
+    <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
+      <span style={{fontFamily:"Georgia,serif",fontSize:21,fontWeight:900,color:col,lineHeight:1}}>{score}</span>
+      <span style={{fontSize:7,color:MU,textTransform:"uppercase",letterSpacing:1,marginTop:2}}>Score</span>
+    </div>
+  </div>;
+}
+function Badge({v}){
+  const m=v==="APROBADO"?[GR,"rgba(74,222,128,.15)","rgba(74,222,128,.3)","\u2713"]:v==="APROBADO CON RESERVAS"?[AM,"rgba(251,191,36,.15)","rgba(251,191,36,.3)","\u26a1"]:[RE,"rgba(248,113,113,.15)","rgba(248,113,113,.3)","\u2717"];
+  return <span style={{display:"inline-flex",alignItems:"center",gap:4,padding:"3px 12px",borderRadius:100,fontSize:11,fontWeight:700,color:m[0],background:m[1],border:"1px solid "+m[2],fontFamily:"monospace"}}>{m[3]} {v}</span>;
+}
+function Dims({dimensiones}){
+  return <>{Object.entries(dimensiones||{}).map(([k,v])=>{
+    const s=typeof v==="object"?Number(v?.score)||0:Number(v)||0,cm=typeof v==="object"?v?.comentario:"";
+    return <div key={k} style={{marginBottom:11}}>
+      <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:2}}>
+        <span style={{width:130,fontSize:11,fontFamily:"monospace",color:MU,flexShrink:0}}>{DL[k]}</span>
+        <span style={{fontSize:9,color:TL,fontFamily:"monospace",width:24,flexShrink:0}}>{W[k]}%</span>
+        <div style={{flex:1,height:4,background:"rgba(255,255,255,.06)",borderRadius:100,overflow:"hidden"}}>
+          <div style={{width:s+"%",height:"100%",background:sc(s),borderRadius:100}}/>
+        </div>
+        <span style={{width:24,fontSize:11,fontFamily:"monospace",color:sc(s),textAlign:"right"}}>{s}</span>
+      </div>
+      <div style={{paddingLeft:161,fontSize:12,color:"rgba(247,244,239,.45)",lineHeight:1.45}}>{cm}</div>
+    </div>;})}
+  </>;
+}
+function ResultCard({r,marca,label,lc}){
+  return <div style={{background:INK,display:"flex",flexDirection:"column",gap:12}}>
+    {label&&<div style={{fontSize:10,fontFamily:"monospace",color:lc||TL,textTransform:"uppercase",letterSpacing:1.5,background:lc?"rgba(201,168,76,.1)":"rgba(42,122,140,.1)",border:"1px solid "+(lc||BO),padding:"3px 10px",borderRadius:6,alignSelf:"flex-start"}}>{label}</div>}
+    <div style={CC}>
+      <div style={{display:"flex",gap:16,alignItems:"flex-start",marginBottom:12}}>
+        <Circle score={r.brandfit_score}/>
+        <div style={{flex:1}}>
+          <Badge v={r.veredicto}/>
+          <div style={{fontFamily:"Georgia,serif",fontSize:17,fontWeight:900,color:CR,margin:"6px 0 3px"}}>{r.handle}</div>
+          <div style={{fontSize:11,color:MU,marginBottom:7}}>
+            {r.plataforma&&<span style={{marginRight:8}}>\u1f4f1 {r.plataforma}</span>}
+            {r.seguidores&&<span style={{marginRight:8}}>\u1f465 {r.seguidores}</span>}
+            {r.engagement&&<span style={{marginRight:8}}>\u1f4ac {r.engagement}%</span>}
+            {r.nicho&&<span>\u1f3af {r.nicho}</span>}
+          </div>
+          <div style={{fontSize:13,color:"rgba(247,244,239,.7)",lineHeight:1.6}}>{r.resumen}</div>
+        </div>
+      </div>
+      {r.datos_encontrados&&<div style={{background:"rgba(42,122,140,.07)",border:"1px solid "+BO,borderRadius:7,padding:"6px 11px",fontSize:11,color:TL,fontFamily:"monospace"}}>\u1f50d {r.datos_encontrados}</div>}
+    </div>
+    <div style={CC}>
+      <div style={{fontSize:9,fontFamily:"monospace",color:TL,letterSpacing:1.5,textTransform:"uppercase",marginBottom:14}}>An\u00e1lisis por dimensi\u00f3n</div>
+      <Dims dimensiones={r.dimensiones}/>
+      <div style={{marginTop:8,padding:"8px 12px",background:"rgba(42,122,140,.06)",borderRadius:7,fontSize:10,fontFamily:"monospace",color:MU}}>
+        {Object.entries(W).map(([k,w])=>{const v=r.dimensiones[k];const s=typeof v==="object"?Number(v?.score)||0:Number(v)||0;return s+"\u00d7"+w+"%";}).join("+")} = <span style={{color:sc(r.brandfit_score),fontWeight:700}}>{r.brandfit_score}/100</span>
+      </div>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+      <div style={{...CC,marginBottom:0}}>
+        <div style={{fontSize:9,fontFamily:"monospace",color:GR,letterSpacing:1.5,textTransform:"uppercase",marginBottom:10}}>\u2713 Fortalezas</div>
+        {(r.fortalezas||[]).map((f,i)=><div key={i} style={{display:"flex",gap:6,marginBottom:7,fontSize:12,color:"rgba(247,244,239,.75)",lineHeight:1.4}}><span style={{color:GR,flexShrink:0}}>\u2713</span>{f}</div>)}
+      </div>
+      <div style={{...CC,marginBottom:0}}>
+        <div style={{fontSize:9,fontFamily:"monospace",color:AM,letterSpacing:1.5,textTransform:"uppercase",marginBottom:10}}>\u26a0 Alertas</div>
+        {r.alertas?.filter(Boolean).length?r.alertas.filter(Boolean).map((a,i)=><div key={i} style={{display:"flex",gap:6,marginBottom:7,fontSize:12,color:"rgba(247,244,239,.75)",lineHeight:1.4}}><span style={{color:AM,flexShrink:0}}>\u26a0</span>{a}</div>):<div style={{fontSize:12,color:MU}}>Sin alertas cr\u00edticas</div>}
+      </div>
+    </div>
+    {r.colaboraciones_detectadas?.filter(Boolean).length>0&&<div style={CC}>
+      <div style={{fontSize:9,fontFamily:"monospace",color:TL,letterSpacing:1.5,textTransform:"uppercase",marginBottom:9}}>\u1f91d Colaboraciones</div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:6}}>{r.colaboraciones_detectadas.filter(Boolean).map((c,i)=><span key={i} style={{padding:"3px 11px",borderRadius:100,fontSize:11,background:"rgba(201,168,76,.1)",border:"1px solid rgba(201,168,76,.25)",color:G}}>{c}</span>)}</div>
+    </div>}
+    <div style={{...CC,background:"linear-gradient(135deg,rgba(42,122,140,.1),rgba(201,168,76,.04))",border:"1px solid rgba(42,122,140,.28)",marginBottom:0}}>
+      <div style={{fontSize:9,fontFamily:"monospace",color:TL,letterSpacing:1.5,textTransform:"uppercase",marginBottom:8}}>\u26a1 Recomendaci\u00f3n para {marca}</div>
+      <div style={{fontSize:13,color:"rgba(247,244,239,.84)",lineHeight:1.75}}>{r.recomendacion}</div>
+    </div>
+  </div>;
+}
+function CompareTable({res}){
+  const rows=[["BrandFit Score",res.a.brandfit_score,res.b.brandfit_score],...Object.keys(W).map(k=>[DL[k]+" ("+W[k]+"%)",gs(res.a,k),gs(res.b,k)])];
+  return <div style={{...CC,padding:0,overflow:"hidden",marginBottom:14}}>
+    <div style={{display:"grid",gridTemplateColumns:"185px 1fr 1fr",background:"rgba(42,122,140,.1)",borderBottom:"1px solid "+BO}}>
+      {["Dimensi\u00f3n",res.a.handle,res.b.handle].map((h,i)=><div key={i} style={{padding:"9px 13px",fontSize:10,fontFamily:"monospace",letterSpacing:1,textTransform:"uppercase",color:TL}}>{h}</div>)}
+    </div>
+    {rows.map(([l,s0,s1],ri)=><div key={ri} style={{display:"grid",gridTemplateColumns:"185px 1fr 1fr",borderBottom:"1px solid rgba(42,122,140,.05)",background:ri%2?"rgba(255,255,255,.01)":"transparent"}}>
+      <div style={{padding:"7px 13px",fontSize:ri===0?11:10,fontFamily:"monospace",color:ri===0?CR:MU,fontWeight:ri===0?700:400}}>{l}</div>
+      <div style={{padding:"7px 13px",fontSize:ri===0?15:12,fontWeight:ri===0||s0>s1?700:400,color:sc(s0)}}>{s0}{ri>0?"/100":""}</div>
+      <div style={{padding:"7px 13px",fontSize:ri===0?15:12,fontWeight:ri===0||s1>s0?700:400,color:sc(s1)}}>{s1}{ri>0?"/100":""}</div>
+    </div>)}
+  </div>;
+}
+function EvalForm({mode,setMode,hA,setHA,hB,setHB,pA,setPA,pB,setPB,marca,setMarca,ind,setInd,obj,setObj,extra,setExtra,err,run}){
+  const I={background:"rgba(255,255,255,.05)",border:"1px solid "+BO,borderRadius:9,padding:"9px 13px",fontSize:14,color:CR,fontFamily:"inherit",outline:"none",width:"100%"};
+  const PT=({val,set})=><div style={{display:"flex",gap:4}}>{["Instagram","TikTok","YouTube"].map(p=><button key={p} onClick={()=>set(p)} style={{padding:"7px 9px",borderRadius:7,border:"1px solid "+(val===p?T:BO),background:val===p?"rgba(42,122,140,.2)":"rgba(255,255,255,.03)",color:val===p?TL:MU,fontSize:11,fontWeight:700,cursor:"pointer"}}>{p==="Instagram"?"\u1f4f8 IG":p==="TikTok"?"\u1f3b5 TT":"\u25b6\ufe0f YT"}</button>)}</div>;
+  return <div>
+    <div style={{display:"flex",gap:4,marginBottom:14,background:"rgba(255,255,255,.03)",border:"1px solid "+BO,borderRadius:11,padding:4}}>
+      {[["single","\u1f464 Evaluar uno"],["compare","\u26a1 Comparar dos"]].map(([m,l])=><button key={m} onClick={()=>setMode(m)} style={{flex:1,padding:"8px",borderRadius:8,border:"none",background:mode===m?"rgba(42,122,140,.2)":"transparent",color:mode===m?TL:MU,fontSize:13,fontWeight:700,cursor:"pointer"}}>{l}</button>)}
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:mode==="compare"?"1fr 1fr":"1fr",gap:12,marginBottom:12}}>
+      <div style={{...CC,marginBottom:0,display:"flex",flexDirection:"column",gap:9}}>
+        <div style={{fontSize:9,fontFamily:"monospace",color:TL,textTransform:"uppercase",letterSpacing:1.5}}>{mode==="compare"?"Influencer A":"Influencer"}</div>
+        <div><label style={{fontSize:11,fontWeight:600,color:MU,textTransform:"uppercase",fontFamily:"monospace",display:"block",marginBottom:5}}>@ Handle</label>
+          <input style={{...I,fontSize:15,fontWeight:700}} value={hA} onChange={e=>setHA(e.target.value)} placeholder="@creator" onKeyDown={e=>e.key==="Enter"&&run()}/></div>
+        <PT val={pA} set={setPA}/>
+      </div>
+      {mode==="compare"&&<div style={{...CC,marginBottom:0,border:"1px solid rgba(201,168,76,.2)",display:"flex",flexDirection:"column",gap:9}}>
+        <div style={{fontSize:9,fontFamily:"monospace",color:G,textTransform:"uppercase",letterSpacing:1.5}}>Influencer B</div>
+        <div><label style={{fontSize:11,fontWeight:600,color:MU,textTransform:"uppercase",fontFamily:"monospace",display:"block",marginBottom:5}}>@ Handle</label>
+          <input style={{...I,fontSize:15,fontWeight:700}} value={hB} onChange={e=>setHB(e.target.value)} placeholder="@creator" onKeyDown={e=>e.key==="Enter"&&run()}/></div>
+        <PT val={pB} set={setPB}/>
+      </div>}
+    </div>
+    <div style={{background:"linear-gradient(135deg,rgba(42,122,140,.08),rgba(42,122,140,.03))",border:"1px solid rgba(42,122,140,.2)",borderRadius:16,padding:18,marginBottom:12}}>
+      <div style={{fontSize:9,fontFamily:"monospace",color:TL,textTransform:"uppercase",letterSpacing:1.5,marginBottom:12}}>Campa\u00f1a</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+        <div><label style={{fontSize:11,fontWeight:600,color:MU,textTransform:"uppercase",fontFamily:"monospace",display:"block",marginBottom:5}}>Marca</label>
+          <input style={I} value={marca} onChange={e=>setMarca(e.target.value)} placeholder="ej: Decathlon"/></div>
+        <div><label style={{fontSize:11,fontWeight:600,color:MU,textTransform:"uppercase",fontFamily:"monospace",display:"block",marginBottom:5}}>Industria</label>
+          <select style={I} value={ind} onChange={e=>setInd(e.target.value)}><option value="">Seleccionar...</option>{IND.map(i=><option key={i}>{i}</option>)}</select></div>
+        <div style={{gridColumn:"span 2"}}><label style={{fontSize:11,fontWeight:600,color:MU,textTransform:"uppercase",fontFamily:"monospace",display:"block",marginBottom:5}}>Objetivo</label>
+          <select style={I} value={obj} onChange={e=>setObj(e.target.value)}><option value="">Seleccionar...</option>{OBJ.map(o=><option key={o}>{o}</option>)}</select></div>
+        <div style={{gridColumn:"span 2"}}><label style={{fontSize:11,fontWeight:600,color:MU,textTransform:"uppercase",fontFamily:"monospace",display:"block",marginBottom:5}}>Contexto <span style={{fontWeight:400}}>(opcional)</span></label>
+          <input style={{...I,fontSize:13}} value={extra} onChange={e=>setExtra(e.target.value)} placeholder='ej: "Audiencia femenina 25-35 Bogot\u00e1"'/></div>
+      </div>
+    </div>
+    {err&&<div style={{background:"rgba(220,38,38,.1)",border:"1px solid rgba(220,38,38,.3)",borderRadius:9,padding:"9px 13px",color:RE,fontSize:13,marginBottom:10}}>{err}</div>}
+    <button onClick={run} style={{width:"100%",padding:"14px",background:"linear-gradient(135deg,"+T+","+TL+")",color:CR,border:"none",borderRadius:13,fontSize:15,fontWeight:700,cursor:"pointer",boxShadow:"0 6px 20px rgba(42,122,140,.3)"}}>{mode==="compare"?"\u26a1 Comparar influencers":"\u1f50d Evaluar influencer"}</button>
+  </div>;
+}
+function Clarif({clarif,hA,hB,mode,ctxA,setCtxA,ctxB,setCtxB,onOk,onBack}){
+  const nA=clarif?.vA&&!clarif.vA.conocido,nB=clarif?.vB&&!clarif.vB.conocido;
+  const SI={width:"100%",background:"rgba(255,255,255,.05)",border:"1px solid "+BO,borderRadius:8,padding:"9px 13px",fontSize:13,color:CR,fontFamily:"inherit",outline:"none"};
+  const blk=(ctx,set,vx,handle,lbl,lc)=><div style={{marginBottom:20}}>
+    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:9}}>
+      <span style={{fontFamily:"Georgia,serif",fontSize:15,fontWeight:700,color:CR}}>{handle}</span>
+      <span style={{fontSize:10,fontFamily:"monospace",color:lc||TL,background:lc?"rgba(201,168,76,.1)":"rgba(42,122,140,.1)",padding:"2px 8px",borderRadius:4}}>{lbl}</span>
+    </div>
+    <div style={{fontSize:13,color:"rgba(247,244,239,.7)",marginBottom:10,lineHeight:1.6}}>{vx.pregunta}</div>
+    {vx.opciones?.length>0&&<div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:9}}>
+      {vx.opciones.map((op,i)=><button key={i} onClick={()=>set(op)} style={{padding:"9px 14px",borderRadius:8,border:"1px solid "+(ctx===op?T:BO),background:ctx===op?"rgba(42,122,140,.2)":"rgba(255,255,255,.03)",color:ctx===op?TL:CR,fontSize:13,cursor:"pointer",textAlign:"left"}}>{ctx===op?"\u2713 ":""}{op}</button>)}
+    </div>}
+    <input value={ctx} onChange={e=>set(e.target.value)} placeholder="O escribe qui\u00e9n es este perfil..." style={SI}/>
+  </div>;
+  return <div style={{...CC,padding:26}}>
+    <div style={{fontSize:11,fontFamily:"monospace",color:TL,letterSpacing:1.5,textTransform:"uppercase",marginBottom:18}}>\u1f50d Necesito m\u00e1s informaci\u00f3n</div>
+    {nA&&blk(ctxA,setCtxA,clarif.vA,hA,mode==="compare"?"Influencer A":"Influencer",null)}
+    {nB&&blk(ctxB,setCtxB,clarif.vB,hB,"Influencer B",G)}
+    <div style={{display:"flex",gap:9}}>
+      <button onClick={onOk} disabled={(!ctxA&&nA)||(!ctxB&&nB)} style={{flex:1,padding:"12px",color:CR,border:"none",borderRadius:11,fontSize:14,fontWeight:700,cursor:(!ctxA&&nA)||(!ctxB&&nB)?"not-allowed":"pointer",background:(!ctxA&&nA)||(!ctxB&&nB)?"rgba(42,122,140,.2)":"linear-gradient(135deg,"+T+","+TL+")"}}>\u26a1 Continuar evaluaci\u00f3n</button>
+      <button onClick={onBack} style={{padding:"12px 16px",background:"transparent",border:"1px solid "+BO,borderRadius:11,color:MU,fontSize:13,cursor:"pointer"}}>\u2190 Volver</button>
+    </div>
+  </div>;
+}
+function Results({res,marca,onPdf,onReset}){
+  return <div>
+    {res.mode==="compare"&&<>
+      <div style={{background:"linear-gradient(135deg,rgba(42,122,140,.15),rgba(201,168,76,.08))",border:"1px solid rgba(42,122,140,.3)",borderRadius:13,padding:"15px 19px",marginBottom:14,display:"flex",alignItems:"center",gap:12}}>
+        <span style={{fontSize:26}}>\u1f3c6</span>
+        <div>
+          <div style={{fontFamily:"Georgia,serif",fontSize:14,fontWeight:700,color:TL}}>{res.a.brandfit_score>=res.b.brandfit_score?res.a.handle:res.b.handle} tiene el mejor BrandFit Score</div>
+          <div style={{fontSize:11,color:"rgba(247,244,239,.5)",marginTop:2}}>{Math.abs(res.a.brandfit_score-res.b.brandfit_score)} puntos de diferencia \u00b7 pesos fijos</div>
+        </div>
+      </div>
+      <CompareTable res={res}/>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+        <ResultCard r={res.a} marca={marca} label="Influencer A"/>
+        <ResultCard r={res.b} marca={marca} label="Influencer B" lc={G}/>
+      </div>
+    </>}
+    {res.mode==="single"&&<ResultCard r={res.a} marca={marca}/>}
+    <div style={{display:"flex",gap:9,marginTop:14}}>
+      <button onClick={onPdf} style={{flex:1,padding:"11px",background:"rgba(201,168,76,.15)",border:"1px solid rgba(201,168,76,.3)",borderRadius:11,color:G,fontSize:13,fontWeight:700,cursor:"pointer"}}>\u1f4c4 Ver informe PDF</button>
+      <button onClick={onReset} style={{flex:1,padding:"11px",background:"transparent",border:"1px solid "+BO,borderRadius:11,color:MU,fontSize:13,fontWeight:600,cursor:"pointer"}}>\u2190 Nueva evaluaci\u00f3n</button>
+    </div>
+  </div>;
+}
+function Historial({hist,onSelect,onClear}){
+  return <div>
+    <h1 style={{fontFamily:"Georgia,serif",fontSize:22,fontWeight:900,marginBottom:5}}>Historial de <em style={{color:TL}}>evaluaciones</em></h1>
+    <p style={{fontSize:12,color:MU,marginBottom:16}}>Haz clic para ver cualquier evaluaci\u00f3n.</p>
+    {hist.length===0?<div style={{textAlign:"center",padding:"44px 20px",color:MU}}><div style={{fontSize:38,marginBottom:10,opacity:.3}}>\u1f4cb</div><p>Sin evaluaciones a\u00fan.</p></div>
+    :<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(210px,1fr))",gap:10}}>
+      {hist.map(h=><div key={h.id} onClick={()=>onSelect(h)} style={{...CC,cursor:"pointer"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
+          <div><div style={{fontFamily:"Georgia,serif",fontSize:13,fontWeight:700}}>{h.mode==="compare"?h.a?.handle+" vs "+h.b?.handle:h.a?.handle}</div>
+          <div style={{fontSize:10,color:MU,marginTop:2}}>{h.marca}</div></div>
+          <span style={{fontFamily:"monospace",fontSize:18,fontWeight:900,color:sc(h.a?.brandfit_score)}}>{h.a?.brandfit_score}</span>
+        </div>
+        <Badge v={h.a?.veredicto}/>
+        <div style={{marginTop:6,fontSize:10,color:MU}}>{new Date(h.date).toLocaleDateString("es-CO",{day:"2-digit",month:"short",year:"numeric"})} \u00b7 {h.mode==="compare"?"\u26a1":"\u1f464"}</div>
+      </div>)}
+    </div>}
+    <button onClick={()=>{if(confirm("\u00bfEliminar todo?")){onClear();}}} style={{marginTop:14,padding:"5px 13px",border:"1px solid rgba(220,38,38,.3)",borderRadius:7,background:"transparent",color:RE,fontSize:11,cursor:"pointer"}}>\u1f5d1 Limpiar historial</button>
+  </div>;
+}
+export default function App(){
+  const [apiKey,setApiKey]=useState(window.ANTHROPIC_KEY||"");
+  const [keyInput,setKeyInput]=useState("");
+  const [keyErr,setKeyErr]=useState(false);
+  const saveKey=()=>{
+    if(!keyInput.startsWith("sk-ant-")){setKeyErr(true);return;}
+    localStorage.setItem("bs_apikey",keyInput);
+    window.ANTHROPIC_KEY=keyInput;
+    setApiKey(keyInput);
+  };
+  if(!apiKey||!apiKey.startsWith("sk-ant-"))return(
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh",background:INK,padding:"20px"}}>
+      <div style={{maxWidth:"440px",width:"100%",background:"rgba(255,255,255,.03)",border:"1px solid rgba(42,122,140,.25)",borderRadius:"20px",padding:"36px 32px",textAlign:"center"}}>
+        <div style={{fontFamily:"Georgia,serif",fontSize:"28px",fontWeight:900,color:CR,marginBottom:"6px"}}>Brand<em style={{color:TL}}>Scope</em></div>
+        <div style={{fontSize:"11px",color:MU,fontFamily:"monospace",marginBottom:"24px"}}>by CollabStudio</div>
+        <input type="password" placeholder="sk-ant-api03-..." value={keyInput} onChange={e=>setKeyInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&saveKey()} style={{width:"100%",padding:"12px 16px",background:"rgba(0,0,0,.4)",border:"1px solid rgba(42,122,140,.3)",borderRadius:"10px",color:CR,fontFamily:"monospace",fontSize:"13px",outline:"none",marginBottom:"8px"}}/>
+        {keyErr&&<div style={{color:RE,fontSize:"12px",marginBottom:"8px"}}>La key debe comenzar con sk-ant-</div>}
+        <div style={{fontSize:"11px",color:MU,marginBottom:"16px"}}>Tu key se guarda en este navegador.</div>
+        <button onClick={saveKey} style={{width:"100%",padding:"13px",background:"linear-gradient(135deg,"+T+","+TL+")",border:"none",borderRadius:"10px",color:CR,fontSize:"14px",fontWeight:700,cursor:"pointer"}}>Activar BrandScope</button>
+        <div style={{marginTop:"20px",paddingTop:"16px",borderTop:"1px solid rgba(42,122,140,.15)",fontSize:"11px",color:MU,lineHeight:1.8}}>Obtener API Key: <a href="https://console.anthropic.com" target="_blank" style={{color:TL}}>console.anthropic.com</a> - API Keys - Create Key</div>
+      </div>
+    </div>
+  );
+  const [mode,setMode]=useState("single");
+  const [hA,setHA]=useState(""),[hB,setHB]=useState("");
+  const [pA,setPA]=useState("Instagram"),[pB,setPB]=useState("Instagram");
+  const [marca,setMarca]=useState(""),[ind,setInd]=useState(""),[obj,setObj]=useState(""),[extra,setExtra]=useState("");
+  const [loading,setLoading]=useState(false),[step,setStep]=useState(0);
+  const [err,setErr]=useState(""),[res,setRes]=useState(null);
+  const [hist,setHist]=useState(lH),[tab,setTab]=useState("eval");
+  const [logs,setLogs]=useState([]),[showLog,setShowLog]=useState(false);
+  const [clarif,setClarif]=useState(null);
+  const [pdfHtml,setPdfHtml]=useState(null);
+  const [ctxA,setCtxA]=useState(""),[ctxB,setCtxB]=useState("");
+  const log=m=>setLogs(p=>[...p,new Date().toLocaleTimeString("es-CO")+" "+m]);
+  const ST=["\u1f50d Verificando...","\u1f4ca Analizando...","\u1f91d Colaboraciones...","\u1f3af Afinidad...","\u26a1 Score..."];
+  const finalizar=async(cA,cB)=>{
+    setLoading(true);setClarif(null);let s=0;
+    const iv=setInterval(()=>{s=(s+1)%5;setStep(s);},2000);setStep(1);
+    try{
+      let result;
+      if(mode==="single"){const a=await evaluar(hA,pA,marca,ind,obj,extra,cA,log);result={mode:"single",a};}
+      else{const a=await evaluar(hA,pA,marca,ind,obj,extra,cA,log);const b=await evaluar(hB,pB,marca,ind,obj,extra,cB,log);result={mode:"compare",a,b};}
+      setRes(result);
+      const e={id:Date.now(),date:new Date().toISOString(),mode:result.mode,marca,a:result.a,b:result.b||null};
+      const nh=[e,...hist].slice(0,50);setHist(nh);sH(nh);
+    }catch(e){log("ERROR: "+e.message);setErr(e.message);setShowLog(true);}
+    finally{clearInterval(iv);setLoading(false);}
+  };
+  const run=async()=>{
+    if(!hA.trim()||!marca.trim()||!ind||!obj){setErr("Completa: handle, marca, industria y objetivo.");return;}
+    if(mode==="compare"&&!hB.trim()){setErr("Ingresa handle B.");return;}
+    setErr("");setLoading(true);setRes(null);setLogs([]);setClarif(null);
+    let s=0;const iv=setInterval(()=>{s=(s+1)%5;setStep(s);},2000);setStep(0);
+    try{
+      if(mode==="single"){
+        const vA=await verificar(hA,pA,log);clearInterval(iv);setLoading(false);
+        if(vA.conocido)await finalizar("","");
+        else{setClarif({vA,vB:null});setCtxA("");setCtxB("");}
+      }else{
+        const vA=await verificar(hA,pA,log);
+        const vB=await verificar(hB,pB,log);
+        clearInterval(iv);setLoading(false);
+        if(vA.conocido&&vB.conocido)await finalizar("","");
+        else{setClarif({vA,vB});setCtxA("");setCtxB("");}
+      }
+    }catch(e){clearInterval(iv);setLoading(false);log("ERROR: "+e.message);setErr(e.message);setShowLog(true);}
+  };
+  if(pdfHtml)return <PdfModal html={pdfHtml} onClose={()=>setPdfHtml(null)}/>;
+  return <div style={{background:INK,minHeight:"100vh",color:CR,fontFamily:"system-ui,sans-serif"}}>
+    <div style={{position:"fixed",inset:0,backgroundImage:"linear-gradient(rgba(42,122,140,.04) 1px,transparent 1px),linear-gradient(90deg,rgba(42,122,140,.04) 1px,transparent 1px)",backgroundSize:"40px 40px",pointerEvents:"none",zIndex:0}}/>
+    <div style={{position:"relative",zIndex:1,maxWidth:920,margin:"0 auto",padding:"22px 18px 72px"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:24,paddingBottom:18,borderBottom:"1px solid "+BO}}>
+        <div>
+          <div style={{fontFamily:"Georgia,serif",fontSize:21,fontWeight:900}}>Brand<em style={{fontStyle:"italic",color:TL}}>Scope</em></div>
+          <div style={{fontSize:9,color:MU,fontFamily:"monospace",letterSpacing:1.2,marginTop:1}}>by CollabStudio\u2665 \u00b7 Evaluador de Influencers</div>
+        </div>
+        <div style={{display:"flex",gap:7}}>
+          <button onClick={()=>setShowLog(!showLog)} style={{background:"transparent",border:"1px solid "+(showLog?T:BO),color:showLog?TL:MU,fontSize:11,padding:"4px 11px",borderRadius:7,cursor:"pointer",fontFamily:"monospace"}}>{showLog?"\u25bc Log":"\u25b6 Log"}</button>
+          <button onClick={()=>setTab(tab==="eval"?"hist":"eval")} style={{background:"transparent",border:"1px solid "+BO,color:MU,fontSize:12,padding:"5px 14px",borderRadius:9,cursor:"pointer",display:"flex",alignItems:"center",gap:5}}>
+            {tab==="eval"?<>\u1f4cb Historial <span style={{background:T,color:"white",borderRadius:100,padding:"1px 6px",fontSize:10,fontWeight:700}}>{hist.length}</span></>:"\u2190 Evaluador"}
+          </button>
+        </div>
+      </div>
+      {showLog&&<div style={{background:"rgba(0,0,0,.4)",border:"1px solid "+BO,borderRadius:10,padding:12,marginBottom:16,maxHeight:150,overflowY:"auto"}}>
+        <div style={{fontSize:9,fontFamily:"monospace",color:TL,letterSpacing:1.5,textTransform:"uppercase",marginBottom:7,display:"flex",justifyContent:"space-between"}}>
+          <span>\u1f4cb Log</span><button onClick={()=>setLogs([])} style={{background:"transparent",border:"none",color:MU,fontSize:10,cursor:"pointer"}}>Limpiar</button>
+        </div>
+        {logs.length===0?<div style={{fontSize:11,color:MU,fontFamily:"monospace"}}>Sin actividad.</div>:logs.map((l,i)=><div key={i} style={{fontSize:10,fontFamily:"monospace",color:l.includes("ERROR")?RE:l.includes("\u2713")?GR:MU,marginBottom:2}}>{l}</div>)}
+      </div>}
+      {tab==="eval"&&<>
+        {!res&&!loading&&!clarif&&<div style={{textAlign:"center",marginBottom:20}}>
+          <h1 style={{fontFamily:"Georgia,serif",fontSize:26,fontWeight:900,lineHeight:1.2,marginBottom:6}}>Ingresa el <em style={{color:TL}}>@handle</em><br/>y BrandScope eval\u00faa al instante</h1>
+          <p style={{fontSize:12,color:MU}}>Score con pesos fijos \u00b7 IA \u00b7 Comparaci\u00f3n \u00b7 PDF</p>
+        </div>}
+        {!res&&!clarif&&<EvalForm mode={mode} setMode={setMode} hA={hA} setHA={setHA} hB={hB} setHB={setHB} pA={pA} setPA={setPA} pB={pB} setPB={setPB} marca={marca} setMarca={setMarca} ind={ind} setInd={setInd} obj={obj} setObj={setObj} extra={extra} setExtra={setExtra} err={err} run={run}/>}
+        {loading&&<div style={{...CC,padding:46,textAlign:"center"}}>
+          <div style={{fontSize:44,marginBottom:13}}>{["\u1f50d","\u1f4ca","\u1f91d","\u1f3af","\u26a1"][step]}</div>
+          <div style={{fontFamily:"monospace",fontSize:13,color:TL,marginBottom:4}}>{ST[step]}</div>
+          <div style={{fontSize:11,color:MU,marginBottom:24}}>{mode==="compare"?"Procesando dos perfiles...":"Procesando perfil..."}</div>
+          <div style={{display:"flex",justifyContent:"center",gap:5}}>{[0,1,2,3,4].map(i=><div key={i} style={{width:i===step?22:6,height:3,borderRadius:100,background:i===step?TL:"rgba(255,255,255,.1)",transition:"all .3s"}}/>)}</div>
+        </div>}
+        {clarif&&!loading&&<Clarif clarif={clarif} hA={hA} hB={hB} mode={mode} ctxA={ctxA} setCtxA={setCtxA} ctxB={ctxB} setCtxB={setCtxB} onOk={()=>finalizar(ctxA,ctxB)} onBack={()=>setClarif(null)}/>}
+        {res&&!loading&&<Results res={res} marca={marca} onPdf={()=>setPdfHtml(openPDF(res.a,marca,res.b||null))} onReset={()=>{setRes(null);setHA("");setHB("");setExtra("");setErr("");setClarif(null);}}/>}
+      </>}
+      {tab==="hist"&&<Historial hist={hist} onSelect={h=>{setRes({mode:h.mode,a:h.a,b:h.b});setMarca(h.marca);setTab("eval");}} onClear={()=>{setHist([]);sH([]);}}/>}
+    </div>
+    <style>{"input:focus,select:focus{border-color:"+T+"!important;outline:none}select option{background:#1a2330;color:"+CR+"}"}</style>
+  </div>;
+}
+
+    try {
+      const root = ReactDOM.createRoot(document.getElementById('root'));
+      root.render(<App/>);
+    } catch(e) {
+      document.getElementById('root').innerHTML = '<div style="color:red;padding:20px;font-family:monospace;background:#1a0000;min-height:100vh"><h2>Error:</h2><pre>'+e.message+'</pre><pre>'+e.stack+'</pre></div>';
+    }
+  </script>
+</body>
+</html>
