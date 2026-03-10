@@ -506,10 +506,19 @@ export default function App(){
   </div>;
 }
 
+    console.log('1. Babel compiled OK');
+    console.log('2. React:', typeof React);
+    console.log('3. ReactDOM:', typeof ReactDOM);
+    console.log('4. root div:', document.getElementById('root'));
+    console.log('5. useState:', typeof useState);
+    console.log('6. App:', typeof App);
     try {
       const root = ReactDOM.createRoot(document.getElementById('root'));
+      console.log('7. createRoot OK');
       root.render(<App/>);
+      console.log('8. render called');
     } catch(e) {
+      console.error('RENDER ERROR:', e.message, e.stack);
       document.getElementById('root').innerHTML = '<div style="color:red;padding:20px;font-family:monospace;background:#1a0000;min-height:100vh"><h2>Error:</h2><pre>'+e.message+'</pre><pre>'+e.stack+'</pre></div>';
     }
   </script>
